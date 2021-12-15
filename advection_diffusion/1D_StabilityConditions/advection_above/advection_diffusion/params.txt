@@ -1,0 +1,4 @@
+Advection Stability Condition: |U*dt/dx|<=1, where dx=L0/N 
+|a*dt/dx|= 1.28 
+Diffusion Stability Condition: b*mu<=0.5, where b=diffusion coefficient (=1 here) and mu=dt/dx^2, where dx=L0/N 
+b*mu=mu= 0.4096 
