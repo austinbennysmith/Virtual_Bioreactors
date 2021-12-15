@@ -1,0 +1,39 @@
+rho1: 1 
+rho2: 0.001225 
+mu1: 1.01015e-05 
+mu2: 1.82838e-06 
+sigma: 0.000742857 
+Dimensional period: 1 
+reference Time scale: 0.101015 
+Dimensionless period: 9.89949 
+tplus: 0.0989949 
+refLength: 0.1 
+refVelocity: 0.989949 
+refTime: 0.101015 
+Reynolds Number: 98994.9 
+Weber Number: 1346.15 
+Froude Number: 1 
+Dimensionless gravity: 1 
+L0: 8 
+(Min) DeltaX: 0.015625 
+Diffusion Stability condition (must be <=0.5, see code for source): 0.00016384 
+(Min) DeltaX: 0.015625 
+Diffusion Stability condition (must be <=0.5, see code for source): 0.00016384 
+(Min) DeltaX: 0.015625 
+Diffusion Stability condition (must be <=0.5, see code for source): 0.00016384 
+(Min) DeltaX: 0.015625 
+Diffusion Stability condition (must be <=0.5, see code for source): 0.00016384 
+(Min) DeltaX: 0.015625 
+Diffusion Stability condition (must be <=0.5, see code for source): 0.00016384 
+(Min) DeltaX: 0.015625 
+Diffusion Stability condition (must be <=0.5, see code for source): 0.00016384 
+(Min) DeltaX: 0.015625 
+Diffusion Stability condition (must be <=0.5, see code for source): 0.00016384 
+(Min) DeltaX: 0.015625 
+Diffusion Stability condition (must be <=0.5, see code for source): 0.00016384 
+(Min) DeltaX: 0.015625 
+Diffusion Stability condition (must be <=0.5, see code for source): 0.00016384 
+(Min) DeltaX: 0.015625 
+Diffusion Stability condition (must be <=0.5, see code for source): 0.00016384 
+(Min) DeltaX: 0.015625 
+Diffusion Stability condition (must be <=0.5, see code for source): 0.00016384 

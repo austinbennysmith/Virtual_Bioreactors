@@ -1,0 +1,3 @@
+with_stations_air_REAL.c:50:23: warning: initializer element is not a constant expression [-Wpedantic]
+   50 | const double period = (dimensional_period/refTime); // how many NONDIMENSIONAL TIME UNITS it takes to go through a complete rocking cycle. DEFINE IN TERMS OF dimensional_period
+      |                       ^

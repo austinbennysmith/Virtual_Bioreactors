@@ -1,0 +1,3 @@
+FullSized_diffusionh.c:62:23: warning: initializer element is not a constant expression [-Wpedantic]
+   62 | const double period = (dimensional_period/refTime); // how many NONDIMENSIONAL TIME UNITS it takes to go through a complete rocking cycle. DEFINE IN TERMS OF dimensional_period
+      |                       ^
