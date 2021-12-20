@@ -16,4 +16,4 @@
 * make FullSized_diffusionh.tst OR make FullSized_advectionh.tst 
   - The [Makefile](https://github.com/austinbennysmith/Virtual_Bioreactors/blob/main/Rocking_Ellipse/Builtin_Solver/FullSized/Makefile) by default calls for 4 CPUs. Depending on your machine's specs, you can alter this by changing the 4 in line 1 of the Makefile to some other number.
   - These simulations take a while (>2 hours on a Dell XPS using 4 CPUs). You may want to run them in the background using a package like nohup. If you use nohup, the relevant command is "nohup make FullSized_diffusionh.tst &"
-
+* To run one of the advection-diffusion simulations, go into the [advection_diffusion](https://github.com/austinbennysmith/Virtual_Bioreactors/tree/main/advection_diffusion) folder and use the same functions as above.
