@@ -10,5 +10,8 @@
 #### There are two main components of this work: fluid dynamical simulations of a [rocking ellipse](https://github.com/austinbennysmith/Virtual_Bioreactors/tree/main/Rocking_Ellipse) containing water and air, as well as an advection-diffusion solver to keep track of a tracer representing oxygen in the reactor. Originally, we attempted to come up with our own [advectiond-diffusion discretization](https://github.com/austinbennysmith/Virtual_Bioreactors/tree/main/advection_diffusion). It worked well for gentle parameters (i.e. water & oil), but broke down when parameters were adjusted to represent air. Therefore, the [latest version](https://github.com/austinbennysmith/Virtual_Bioreactors/tree/main/Rocking_Ellipse/Builtin_Solver/FullSized) of the rocking ellipse simulation just uses built-in [advection](http://basilisk.fr/src/advection.h) and [diffusion](http://basilisk.fr/src/diffusion.h) functions.
 
 ### **Directions for running code yourself:**
-#### Running this code on your own machine should be fairly straightforward, provided that you have already [installed Basilisk C](http://basilisk.fr/src/INSTALL). If this is the case, then the steps below should allow you to run a simulation:
-* aa
+#### Running this code on your own machine should be fairly straightforward, provided that you have already [installed Basilisk C](http://basilisk.fr/src/INSTALL) as well as [git](https://github.com/git-guides/install-git). If this is the case, then the steps below should allow you to run a simulation:
+* git clone https://github.com/austinbennysmith/Virtual_Bioreactors
+* cd into Virtual_Bioreactors/Rocking_Ellipse/Builtin_Solver/FullSized
+* make FullSized_diffusionh.tst OR make FullSized_advectionh.tst 
+  - abc
