@@ -1,6 +1,10 @@
-#define FILTERED //RC
-#define mu(f)  (1./(clamp(f,0,1)*(1./mu1 - 1./mu2) + 1./mu2)) //RC
+// See "Bioreactor_Equations_2.pdf" for derivations of the equations and nondimensionalizations used in this code.
 
+// The following 2 lines are helpful for interface stuff:
+#define FILTERED
+#define mu(f)  (1./(clamp(f,0,1)*(1./mu1 - 1./mu2) + 1./mu2))
+
+// Header files to be included (you can read more about them at the Basilisk C website)
 #include "navier-stokes/centered.h"
 #include "two-phase.h"
 #include "tension.h"
@@ -10,73 +14,74 @@
 #include "diffusion.h"
 #include "tag.h"
 
-// scalar TT[];
-scalar T[];
+scalar T[]; // This will be the Oxygen tracer
 scalar * tracers = {T};
 
-scalar T_water[];
-scalar T_air[];
-scalar T_ellipseIN[];
-scalar T_ellipseOUT[];
-scalar WATER[];
+// Defining scalar fields to keep track of how much of the oxygen tracer is in the water, air, and in and out of the ellipse:
+scalar T_water[]; // In the water
+scalar T_air[]; // In the air
+scalar T_ellipseIN[]; // In the ellipse
+scalar T_ellipseOUT[]; // Outside of the ellipse
 
-scalar UV[]; // Magnitude of velocity
+scalar WATER[]; // Scalar to keep track of the mass of the water
+
+scalar UV[]; // Scalar field for the magnitude of velocity
 // double b = 0.00002; // Diffusion coefficient
 
-double thetaNOW;
-double omegaNOW;
+double thetaNOW; // Angle of rotation
+double omegaNOW; // Angular velocity of the ellipse
 
 // The following doubles will be used in the acceleration event to avoid really long lines of code:
-double gravityX;
-double gravityY;
-double coriolisX;
-double coriolisY;
-double centripetalX;
-double centripetalY;
+double gravityX; // x-component of gravitational acceleration
+double gravityY; // y-component of gravitational acceleration
+double coriolisX; // x-component of coriolis acceleration
+double coriolisY; // y-component of coriolis acceleration
+double centripetalX; // x-component of centripetal acceleration
+double centripetalY; // y-component of centripetal acceleration
 
-FILE *fp1 ;
+FILE *fp1 ; // pointer file to be used later
 
-#define MAXLEVEL 9 // RC was 4, needs to be bigger to capture the setup
+#define MAXLEVEL 9 // Maximum level of refinement. I will define grid refinement in the init function
 
-// Defining Froude separately from the other nondimensional quantities because it will be used to set up the reference Velocity:
+// Defining Froude number separately from the other nondimensional quantities because it will be used to set up the reference Velocity:
 #define Fr 1.0 // Froude number
 
 // DIMENSIONAL QUANTITIES:
-#define rhoWater 1000.0 // kg/m^3
-#define rhoAir 1.225 // kg/m^3
-#define muWater 0.001 // approximatley the viscosity of water
-#define muAir 1.81e-5 // approximateley the viscosity of air
+#define rhoWater 1000.0 // water density, kg/m^3
+#define rhoAir 1.225 // air density, kg/m^3
+#define muWater 0.001 // water viscosity, Pa*s
+#define muAir 1.81e-5 // air viscosity, Pa*s
+
+// If you want to make the setup computationally gentler, you make the air viscosity one or two magnitudes greater:
 // #define muAir 1.81e-4 // visc. of air *10
-// #define muAir 1.81e-3 // visc. of air *10
-#define sig 0.0728  //surface tension of water
-const double semiminor = 1.0; // semiminor axis (cm)
-const double semimajor = semiminor*3.0; // semimajor axis (cm)
+// #define muAir 1.81e-3 // visc. of air *100
+
+#define sig 0.0728  //surface tension of water, N/m
+const double semiminor = 1.0; // semiminor axis (dm)
+const double semimajor = semiminor*3.0; // semimajor axis (dm)
 const double maxDegrees = 7.0; // degrees through which the reactor rotates
-double maxRads = maxDegrees*(3.14159265/180.0);
+double maxRads = maxDegrees*(3.14159265/180.0); // radians through which the reactor rotates
 #define dimensional_period 1.0 // rocking period in actual seconds (will convert to nondimensional time units below for the simulation)
-#define refLength 0.1  // semiminor axis length (m). Could define in terms of semiminor? nah
+#define refLength 0.1  // semiminor axis length (m)
 #define refVelocity (Fr*sqrt(9.8*refLength))  // Reference length, defined in terms of the Froude number
-#define refTime (refLength/refVelocity)
+#define refTime (refLength/refVelocity) // Reference time scale (not actually used for the simulation, but useful to have)
 
 // DIMENSIONLESS QUANTITIES:
-const double period = (dimensional_period/refTime); // how many NONDIMENSIONAL TIME UNITS it takes to go through a complete rocking cycle. DEFINE IN TERMS OF dimensional_period
+const double period = (dimensional_period/refTime); // how many NONDIMENSIONAL TIME UNITS it takes to go through a complete rocking cycle
 double BB = (2.0*3.14159265)/period; // constant used in rocking motion equations below
 #define Re (rhoWater*refVelocity*refLength/muWater)  // Reynolds number
-#define We (rhoWater*pow(refVelocity,2)*refLength/sig)
-#define rho_ratio (rhoAir/rhoWater)
-#define mu_ratio (muAir/muWater)
+#define We (rhoWater*pow(refVelocity,2)*refLength/sig) // Weber number
+#define rho_ratio (rhoAir/rhoWater) // Density ratio
+#define mu_ratio (muAir/muWater) // Viscosity ratio 
 // Should include Peclet numbers eventually
 
-const double tmax = (50.0*period); // Runs for 5 oscillation periods (defined in dimensionless time units)
+const double tmax = (50.0*period); // You probably want to change this to a 5, not 50 (50 oscillations is a LONG simulation)
 const double tplus = (period/100.0); // events that run at set t invervals will have those intervals defined by this quantity
 
+// Pointer files for outputting data:
 FILE *fp_params;
-
-// RC
 FILE * fp_stats;
-
 FILE * fp_interface;
-
 FILE * fp_mass;
 FILE * fp_mass_water;
 FILE * fp_mass_air;
@@ -84,6 +89,7 @@ FILE * fp_mass_IN;
 FILE * fp_mass_OUT;
 FILE * fp_howmuch_water;
 
+// Boundary conditions:
 u.t[top] = dirichlet(0.0);
 u.n[top] = dirichlet(0.0);
 
@@ -96,40 +102,24 @@ u.n[left] = dirichlet(0.0);
 u.t[right] = dirichlet(0.0);
 u.n[right] = dirichlet(0.0);
 
-// I use the following variables to determine the cell length/width
 const double ymax = semiminor+0.5; // ymax of domain (used in masking & profiling, etc.)
 const double ymin = -semiminor-0.5; // ymin of domain (used in masking & profiling, etc.)
 const double xmax = semimajor+3.0; // xmax of domain (used in profiling)
 const double xmin = -semimajor-3.0; // xmin of domain (used in profiling)
-// long int sizeNow; // Total # of cells at t=0.0 (as long int)
-// double sizeNowDouble; // Total # of cells at t=0.0 (as double)
-// double numCellsX; // # of cells in x (long) direction
-// double numCellsY; // # of cells in y (short) direction
+// The following is from an old attempt to do some stability tests. It's probably not relevant anymore but I'm leaving it here in case anyone wants to build on it.
 double DeltaX; // Length of smallest cell in x direction
-// double DeltaY; // Length of smallest cell in y direction
-// double ylength; // Domain length in y direction
-// double xlength; // Domain length in x direction
 double Diffusion_Stability; // test for stability of the FTCS diffusion scheme
 double Advection_Stability; // test for stability of the Lax-Wendroff advection scheme
 
-// scalar s1[];
-
-// void draw_frame(char * fname)
-// {
-// 	cells();
-// 	squares("s1");
-// 	save("fname.png");
-// }
-
+// Defining a scalar field for keeping track of inside/outside the ellipse:
 scalar circle[];
 
 int main() {
-  L0 = 2.0*semimajor+2.0;
-  origin(-L0/2., -semiminor-0.5);// Change -0.5 to -L0/16??
-  // periodic(right);
-  init_grid (1 << MAXLEVEL);
+  L0 = 2.0*semimajor+2.0; // Length of the simulation domain
+  origin(-L0/2., -semiminor-0.5); // Defining the origin of the setup
+  init_grid (1 << MAXLEVEL); // Setting up the grid
 
-  // RC
+  // Setting up some data files:
   {
     char name[200];
     sprintf(name, "logstats.dat");
@@ -174,7 +164,8 @@ int main() {
   mu2 = mu_ratio*mu1; // air dynamic viscosity
   f.sigma=1/We; // change this later
 
-  DT = 1.0e-3; // RC
+  // Some computational parameters:
+  DT = 1.0e-3;
   NITERMIN = 1; // default 1
   NITERMAX = 500; // default 100
   TOLERANCE = 1e-5; // default 1e-3
@@ -224,26 +215,24 @@ int main() {
   // fclose(fp_howmuch_water);
 }
 
+// Event to define gravitational, coriolis and centripetal accelerations:
+// See "Rotating_Reference_Frame.pdf" for derivations of the accelerations written out here
 event acceleration (i++)
 {
-  thetaNOW = maxRads*sin(BB*t); // Derivation in notebook. Should write this up at some point.
+  thetaNOW = maxRads*sin(BB*t); // Angle defining how much the ellipse has rotated relative to horizontal
   omegaNOW = BB*maxRads*cos(BB*t); // Derivative of omegaNOW w/respect to t
   face vector av = a;
-  // Which of the following 2 ways of doing it is better??
   foreach_face(x) {
-    gravityX = (1/sqrt(2))*sq(1/Fr)*sin(thetaNOW);
-    coriolisX = 2.0*((u.y[]+u.y[-1])/2.0)*BB*maxRads*cos(BB*t);
-    centripetalX = x*sq(BB)*sq(maxRads)*sq(cos(BB*t));
-    av.x[] -= gravityX - coriolisX + centripetalX;
-    // av.x[] -= (1/sqrt(2))*sq(1/Fr)*sin(thetaNOW) + 2.0*((u.y[]+u.y[-1])/2.0)*BB*maxRads*cos(BB*t) + x*sq(BB)*sq(maxRads)*sq(cos(BB*t));
+    gravityX = (1/sqrt(2))*sq(1/Fr)*sin(thetaNOW); // x component of gravity
+    coriolisX = 2.0*((u.y[]+u.y[-1])/2.0)*BB*maxRads*cos(BB*t); // x component of Coriolis
+    centripetalX = x*sq(BB)*sq(maxRads)*sq(cos(BB*t)); // x component of Centripetal
+    av.x[] -= gravityX - coriolisX + centripetalX; // Combining the accelerations
   }
   foreach_face(y) {
-    gravityY = (1/sqrt(2))*sq(1/Fr)*cos(thetaNOW);
-    coriolisY = -2.0*((u.x[]+u.x[-1])/2.0)*BB*maxRads*cos(BB*t);
-    centripetalY = sq(BB)*sq(maxRads)*sq(cos(BB*t))*(y+semiminor);
-    av.y[] -= gravityY - coriolisY + centripetalY;
-    // av.y[] -= (1/sqrt(2))*sq(1/Fr)*cos(thetaNOW) - 2.0*((u.x[]+u.x[-1])/2.0)*BB*maxRads*cos(BB*t) + sq(BB)*sq(maxRads)*sq(cos(BB*t))*(y+semiminor);
-    // av.x[] -= (1/sqrt(2))*sq(1/Fr)*sin(thetaNOW);
+    gravityY = (1/sqrt(2))*sq(1/Fr)*cos(thetaNOW); // y component of gravity
+    coriolisY = -2.0*((u.x[]+u.x[-1])/2.0)*BB*maxRads*cos(BB*t); // y component of Coriolis
+    centripetalY = sq(BB)*sq(maxRads)*sq(cos(BB*t))*(y+semiminor); // y component of Centripetal
+    av.y[] -= gravityY - coriolisY + centripetalY; // Combining the accelerations
   }
 }
 
@@ -255,38 +244,28 @@ event init(t = 0) {
     u.y[] = 0.;
   }
 
-  // RC cut the top and bottom of domain
   // Could try changing this to -0.5 and 0.5 just to see
   mask (y > ymax ? top : none);
   mask (y < ymin ? bottom : none);
-  
-  // mask (circle < 1.0 ? top : none);
 
-  refine(level<MAXLEVEL && (1.0/sq(semimajor))*sq(x) + (1.0/sq(semiminor))*sq(y) < 1.0);
-  unrefine(level<MAXLEVEL && (1.0/sq(semimajor))*sq(x) + (1.0/sq(semiminor))*sq(y) > sq(1.0));
-  // adapt_wavelet((scalar *){f, u.x, u.y}, (double[]){1e-6, 1e-2, 1e-2}, MAXLEVEL, 4);
+  refine(level<MAXLEVEL && (1.0/sq(semimajor))*sq(x) + (1.0/sq(semiminor))*sq(y) < 1.0); // Refining to the maximum level inside the ellipse
+  unrefine(level<MAXLEVEL && (1.0/sq(semimajor))*sq(x) + (1.0/sq(semiminor))*sq(y) > sq(1.0)); // Unrefining outside of the ellipse
 
   fraction (f, -y); // Could automate fill height here by putting a dimensional quantity at the beginning if I wanted
 
-  // foreach() {
-  //   TT[] = exp(-(10*x*x+10*y*y));
-  // }
-  fraction (T, -(0.05*sq(x) + sq(y+0.7) - sq(0.2)));
-  // fraction (TT, intersection((y), (-((1.0/sq(semimajor))*sq(x) + (1.0/sq(semiminor))*sq(y) - 1.0))));
-  // fraction (TT, -(sq(x) + sq(y) - sq(0.5)));
-  // boundary({TT});
-
-  // boundary conditions
-  // u.t[top] = dirichlet(1.);
-  // u.t[bottom] = dirichlet(0.);
-
+  // Different initializations for the tracer position:
+  fraction (T, -(0.05*sq(x) + sq(y+0.7) - sq(0.2))); // Blob in the water
+  // fraction (T, intersection((y), (-((1.0/sq(semimajor))*sq(x) + (1.0/sq(semiminor))*sq(y) - 1.0)))); // Headspace (air region) filled with tracer
+  // fraction (T, -(sq(x) + sq(y) - sq(0.5))); // Circle of tracer at interface
 }
 
+// Event for diffusion of the Oxygen tracer:
 // example: http://basilisk.fr/src/test/kh-ns.c
 event tracer_diffusion(i++) { // not sure if it should be i++ or +=dt here
-  diffusion (T, dt, mu); // mu is defined in the second line
+  diffusion (T, dt, mu);
 }
 
+// The following removes small droplets. Without using this, the simulation blows up (fun to watch)
 event small_droplet_removal (i++) {
 /* Removes any small droplets that have formed, that are smaller than a specific
     size */
@@ -294,10 +273,11 @@ event small_droplet_removal (i++) {
     remove_droplets(f, 8, true); // Removes bubbles of diameter 8 cells or less
 }
 
+// This event sets up the ellipse & boundary conditions
 event circle_flow (i++) {
-  fraction (circle, ((1.0/sq(semimajor))*sq(x) + (1.0/sq(semiminor))*sq(y) - 1.0));
+  fraction (circle, ((1.0/sq(semimajor))*sq(x) + (1.0/sq(semiminor))*sq(y) - 1.0)); // Defining the elliptical reactor outline
   foreach() {
-    foreach_dimension() {
+    foreach_dimension() { // Boundary conditions (velocities are 0 outside the ellipse):
       u.x[] = (1. - circle[])*u.x[];
       u.y[] = (1. - circle[])*u.y[];
     }
@@ -305,101 +285,10 @@ event circle_flow (i++) {
   boundary ((scalar *){u});
 }
 
-// event adapt (i++)
-// {
-//   adapt_wavelet({u, f}, (double[]){1e-2, 1e-2, 1e-2}, LEVEL);
-// }
-// event adapt(i++)
-// {
-// 	// Order matters for the following (in which the regions called by refine() and unrefine() overlap. If they don't overlap, you can at least switch refine() and unrefine(), idk about other rearrangements.)
-// 	// unrefine(y<0.1);
-// 	// refine(y<0.1&&level<9);
-// 	// adapt_wavelet((scalar *){f, u.x, u.y}, (double[]){1e-6, 1e-2, 1e-2}, (LEVEL+2), (LEVEL-3));
-//   // refine(circle[]>0.0&&level<9);
-//   // Going fast to get video editing working:
-//   adapt_wavelet((scalar *){f, u.x, u.y}, (double[]){1e-6, 1e-2, 1e-2}, MAXLEVEL, 4);
-  
-// 	// // refine(y>0.4&&x>1.0&&level<=8);
-// 	// unrefine(y<0.1);
-// 	// refine(y<0.1&&level<9);
-// 	// adapt_wavelet((scalar *){f, u.x, u.y}, (double[]){1e-6, 1e-2, 1e-2}, (LEVEL+2), (LEVEL-3));
-
-// 	// adapt_wavelet((scalar *){u}, (double[]){3e-2, 3e-2}, 9, 4);
-// 	// unrefine(x>2.0);
-
-// 	// Order doesn't matter for the following:
-// 	// adapt_wavelet((scalar *){f, u.x, u.y}, (double[]){1e-6, 1e-2, 1e-2}, 8, 4);
-// 	// refine(y<-0.45 && level<8);
-
-// 	// Order doesn't matter for the following:
-// 	// adapt_wavelet((scalar *){u}, (double[]){3e-2, 3e-2}, 9, 4);
-// 	// unrefine(y<0.1);
-
-// 	// Order doesn't matter for the following:
-// 	// The following two lines manually set the refinement level to be higher near the interface (y=0.3):
-// 	// refine(y<0.35 && y>0.25 && level<9);
-// 	// unrefine(y<0.25 && y>0.35);
-
-// 	// The following line is how I probably want to actually do the AMR for this code:
-// 	// adapt_wavelet((scalar *){f, u.x, u.y}, (double[]){1e-6, 1e-2, 1e-2}, 8, 4);
-	
-// 	// The following line does just u. If you don't put (scalar *) in front of it, an error is thrown since u is a vector but Basilisk expects a scalar
-// 	// adapt_wavelet((scalar *){u}, (double[]){3e-2, 3e-2}, 9, 4);
-
-// 	// Test Radu suggested:
-// 	// refine(y>0.45&&level<=8);
-// 	// adapt_wavelet((scalar *){f}, (double[]){1e-6}, 8, 4);
-// 	// unrefine(y>0.45&&x>3.0&&level<=8);
-// }
-
-// scalar dTT[],qh[],qv[];
-// event integration (i++) {
-//   // Setting up scalar field to represent the stability condition for diffusion:
-//   // foreach() {
-//   //  diffStability[] = b*
-//   // }
-
-//   foreach() {
-//     // advection-diffusion:
-//       qh[] = b*(TT[-1,0]-TT[0,0])/Delta + u.x[]*(TT[0,0]+TT[-1,0])/2.0 - ((sq(u.x[])*dt)/(2.0*Delta))*(TT[0,0]-TT[-1,0]);
-//       qv[] = b*(TT[0,-1]-TT[0,0])/Delta + u.y[]*(TT[0,0]+TT[0,-1])/2.0 - ((sq(u.y[])*dt)/(2.0*Delta))*(TT[0,0]-TT[-1,0]);;
-
-//   // double dt = DT;
-//   // scalar dT[];
-//   // dt = dtnext (dt);
-
-//     // diffusion scheme:
-//     // qh[] = b*(TT[-1,0]-TT[0,0])/Delta;
-//     // qv[] = b*(TT[0,-1]-TT[0,0])/Delta;
-
-//     // advection scheme:
-//     // qh[] = u.x[]*(TT[0,0]+TT[-1,0])/2.0 - ((sq(u.x[])*dt)/(2.0*Delta))*(TT[0,0]-TT[-1,0]);
-//     // qv[] = u.y[]*(TT[0,0]+TT[0,-1])/2.0 - ((sq(u.y[])*dt)/(2.0*Delta))*(TT[0,0]-TT[-1,0]);
-//   }
-//   boundary ({qh});
-//   boundary({qv});
-//   foreach() {
-//     dTT[] = ( qh[0,0]  - qh[1,0] )/Delta + ( qv[0,0]  - qv[0,1] )/Delta;
-//     }
-//   //   // Alternative method for advection-diffusion (FINITE DIFFERENCES, forward time, centered space for diffusion, Lax-Wendroff for advection):
-//   // dT[] = (T[1,0]-2*T[0,0]+T[-1,0])/(sq(Delta)) + (u.x[]/(2*Delta))*(T[1,0]-T[-1,0]) + ((sq(u.x[])*dt)/(2*sq(Delta)))*(T[1,0]-2*T[0,0]+T[-1,0]) + (T[0,1]-2*T[0,0]+T[0,-1])/(sq(Delta)) + (u.y[]/(2*Delta))*(T[0,1]-T[0,-1]) + ((sq(u.y[])*dt)/(2*sq(Delta)))*(T[0,1]-2*T[0,0]+T[0,-1]);
-//   boundary ({qh});
-//   boundary({qv});
-//   foreach() {
-//     dTT[] = ( qh[0,0]  - qh[1,0] )/Delta + ( qv[0,0]  - qv[0,1] )/Delta;
-
-//   //   // Alternative method for advection-diffusion (FINITE DIFFERENCES, forward time, centered space for diffusion, Lax-Wendroff for advection):
-//   // dT[] = (T[1,0]-2*T[0,0]+T[-1,0])/(sq(Delta)) + (u.x[]/(2*Delta))*(T[1,0]-T[-1,0]) + ((sq(u.x[])*dt)/(2*sq(Delta)))*(T[1,0]-2*T[0,0]+T[-1,0]) + (T[0,1]-2*T[0,0]+T[0,-1])/(sq(Delta)) + (u.y[]/(2*Delta))*(T[0,1]-T[0,-1]) + ((sq(u.y[])*dt)/(2*sq(Delta)))*(T[0,1]-2*T[0,0]+T[0,-1]);
-//   }
-
-//   // THESE ARE THE TWO LINES THAT CAUSE IT TO INITIALIZE WEIRDLY
-//   foreach()
-//     TT[] += DT*dTT[];
-//   boundary ({TT});
-// }
+// Defining values in the scalar field for the magnitude of water velocity:
 event vel_Mag (t+=tplus) {
   foreach() {
-    if (f[]==1) { // This is just for water
+    if (f[]==1) { // This is just for water. If you change the conditionas you can get fluid velocity for air, or both air & water.
       UV[]=sqrt(sq(u.x[])+sq(u.y[]));
     }
     else {
@@ -408,6 +297,7 @@ event vel_Mag (t+=tplus) {
   }
 }
 
+// Defining values for the scalar fields representing the Oxygen tracer in various domains of the simuation:
 event Tracer_Fields (t+=tplus) {
   // Tracer field in water inside ellipse:
   foreach() {
@@ -427,7 +317,7 @@ event Tracer_Fields (t+=tplus) {
       T_air[]=0;
     }
   }
-  // Tracer field inside ellipse:
+  // Tracer field inside the ellipse:
   foreach() {
     if (circle[]==0) {
       T_ellipseIN[]=T[];
@@ -436,7 +326,7 @@ event Tracer_Fields (t+=tplus) {
       T_ellipseIN[]=0;
     }
   }
-  // Tracer field outside ellipse:
+  // Tracer field outside the ellipse:
   foreach() {
     if (circle[]==1) {
       T_ellipseOUT[]=T[];
@@ -447,6 +337,7 @@ event Tracer_Fields (t+=tplus) {
   }
 }
 
+// Measuring the mass of the water:
 event howmuch_water_isthere (t+=tplus) {
   foreach() {
     if (f[]==1 && circle[]==0) {
@@ -455,62 +346,21 @@ event howmuch_water_isthere (t+=tplus) {
   }
 }
 
-event end (t = tmax) { // RC restricted to 400
+// Simulation ends at t=tmax, prints out a few numbers.
+event end (t = tmax) {
   printf ("i = %d t = %g\n", i, t);
 }
 
-// RC added this for profiling
+// Printing some profiles:
 event logstats (t += tplus) {
 
     timing s = timer_timing (perf.gt, i, perf.tnc, NULL);
  
-    // i, timestep, no of cells, real time elapsed, cpu time
     fprintf(fp_stats, "i: %i t: %g dt: %g #Cells: %ld Wall clock time (s): %g CPU time (s): %g \n", i, t, dt, grid->n, perf.t, s.cpu);
     fflush(fp_stats);
-
-    // if (t<1.0) { // Could change this condition in the future but won't for now
-
-    //   {
-    //   char params[200];
-    //   sprintf(params, "params.txt");
-    //   fp_params=fopen(params, "a");
-    //   }
-
-    //   // sizeNow = grid->n;
-    //   // xlength = L0;
-    //   // ylength = ymax-ymin;
-    //   // sizeNowDouble = (double) sizeNow;
-    //   // numCellsY = sqrt(sizeNow/xlength);
-    //   // numCellsX = (sizeNow/numCellsY);
-    //   // DeltaX = (xlength/numCellsX);
-    //   // DeltaY = (ylength/numCellsY);
-    //   DeltaX = (L0/pow(2, MAXLEVEL));
-
-    //   // Here I perform a stability test for the FTCS diffusion discretization.
-    //   // I must have Diffusion_Stability<=0.5
-    //   // Source: http://math.tifrbng.res.in/~praveen/notes/cm2013/heat_2d.pdf
-    //   Diffusion_Stability = (2*b*DT)/sq(DeltaX); // DeltaX = DeltaY so it doesn't matter which one I put here
-
-    //   // Here I should perform a stability test for the Lax-Wendroff advection discretization.
-    //   // I haven't actually set it up yet, but it should involve a scalar field for the entire domain.
-    //   // I must have Advection_Stability<=1. Stability condition is the same as in 1D.
-    //   // Source: http://pages.erau.edu/~snivelyj/ep711sp12/EP711_7.pdf
-      
-    //   // Putting grid setup parameters in the params.txt file. I'm taking the MAXIMUM # of cells in order to get the MINIMUM cell size.
-    //   // I'm doing this because I want the scheme to be stable for every grid cell, so I test the stability for the smallest grid cell.
-    //   // If it's stable for the smallest grid cell, it's stable for all of them.
-    //   // fprintf(fp_params, "(Max) Total #Cells: %g \n", sizeNowDouble);
-    //   // fprintf(fp_params, "(Max) #Cells along width: %g \n", numCellsY);
-    //   // fprintf(fp_params, "(Max) #Cells along length: %g \n", numCellsX);
-    //   fprintf(fp_params, "(Min) DeltaX: %g \n", DeltaX);
-    //   // fprintf(fp_params, "(Min) DeltaY: %g \n", DeltaY);
-    //   fprintf(fp_params, "Diffusion Stability condition (must be <=0.5, see code for source): %g \n", Diffusion_Stability);
-    //   // fprintf(fp_params, "Advection Stability condition (must be <=1, see code for source): %g \n", Advection_Stability);
-
-    //   fclose(fp_params);
-    // }
 }
 
+// Measuring the tracer mass in air, water, in the ellipse, outside of the ellipse (outputing to data files):
 event tracer_mass (t+=tplus) {
   stats s1 = statsf(T);
   fprintf(fp_mass, "t: %g Total mass: %g \n", t, s1.sum);
@@ -533,12 +383,14 @@ event tracer_mass (t+=tplus) {
   fflush(fp_mass_OUT);
 }
 
+// Measuring the mass of the water:
 event measure_water (t+=tplus) {
   stats swater = statsf(WATER);
   fprintf(fp_howmuch_water, "t: %g Water mass: %g \n", t, swater.sum);
   fflush(fp_howmuch_water);
 }
 
+// Advection stability test (this is pretty old, I'm not sure if it still works, but feel free to play with it)
 double uxmax;
 double uymax;
 double UMAX;
@@ -564,6 +416,8 @@ event advection_test (t+=tplus) {
   fclose(fp_adv);
 }
 
+// Outputing gfsview files. Gfsview is a useful functionality for looking at simulation data.
+// You can look at any of the scalar fields, grid cells, etc. Just type "gfsview2D FILENAME" in the terminal
 event gfsview (t += tplus*10.0) { // RC
     char name_gfs[200];
     sprintf(name_gfs,"Slice-%0.1f.gfs",t);
@@ -573,15 +427,14 @@ event gfsview (t += tplus*10.0) { // RC
     fclose(fp_gfs);
 }
 
+// Making movies:
 event xmovie (t+=tplus)
 {
- view (fov=9, width=800, height=350);
+ view (fov=9, width=800, height=350); // Setting up field of view & size
  clear();
- // cells(lc={0.5,0.5,0.5}, lw=0.5);
- squares("u.x", spread=-1, linear=true, map=cool_warm);
- draw_vof ("f", lc = {0.0,0.0,0.0}, lw=2);
- draw_vof("circle", lc = {0.0,0.0,0.0}, lw=2);
- // cells();
+ squares("u.x", spread=-1, linear=true, map=cool_warm); // Graphing x component of velocity
+ draw_vof ("f", lc = {0.0,0.0,0.0}, lw=2); // Drawing a curve to represent the air-water interface
+ draw_vof("circle", lc = {0.0,0.0,0.0}, lw=2); // Curve to represent boundary of the ellipse
  save ("xmovie.mp4");
 }
 
@@ -592,8 +445,6 @@ event ymovie (t+=tplus)
  squares("u.y", spread=-1, linear=true, map=cool_warm);
  draw_vof ("f", lc = {0.0,0.0,0.0}, lw=2);
  draw_vof("circle", lc = {0.0,0.0,0.0}, lw=2);
- // draw_vof("circle", lc = {0.0,0.0,0.0}, lw=2);
- // cells(); // Movie is black when this line is included
  save ("ymovie.mp4");
 }
 
@@ -609,18 +460,8 @@ event MagMovie (t+=tplus)
  save ("VelMagmovie.mp4");
 }
 
-// event tracemovie (t+=tplus)
-// {
-//  view (fov=9, width=800, height=350);
-//  clear();
-//  // cells(lc={0.5,0.5,0.5}, lw=0.5);
-//  squares("TT", min=0.0, max=1.0, linear=true, map=cool_warm);
-//  draw_vof ("f", lc = {0.0,0.0,0.0}, lw=2);
-//  draw_vof("circle", lc = {0.0,0.0,0.0}, lw=2);
-//  // cells();
-//  save ("tracemovie.mp4");
-// }
-
+// Tracer movies
+// This movie sets the color scale based on minimum & maximum values of the scalar field.
 event TmovieMinMax (t+=tplus)
 {
  view (fov=9, width=800, height=350);
@@ -631,6 +472,7 @@ event TmovieMinMax (t+=tplus)
  save ("TmovieMinMax.mp4");
 }
 
+// This movie sets the color scale based on the variance of the scalar field.
 event TmovieSpread (t+=tplus)
 {
  view (fov=9, width=800, height=350);
@@ -641,6 +483,7 @@ event TmovieSpread (t+=tplus)
  save ("TmovieSpread.mp4");
 }
 
+// Movie to track shear stress:
 // event shearmovie (t+=tplus)
 // {
 //   scalar shear[];
@@ -670,6 +513,23 @@ event TmovieSpread (t+=tplus)
 //   fclose(fp_shear);
 // }
 
+// Movie of vorticity:
+event vortmovie (t+=tplus, t<=10.0*tplus)
+{
+  scalar omega[];
+  vorticity(u, omega);
+
+  view (fov=9, width=800, height=350);
+  clear();
+  squares("omega", spread=-1.0, linear=true, map=cool_warm);
+  draw_vof ("f", lc = {0.0,0.0,0.0}, lw=2);
+  draw_vof("circle", lc = {0.0,0.0,0.0}, lw=2);
+  // draw_vof("fs",fc = {0.0,0.0,0.0}, lw=1); 
+  // draw_vof("f", lc = {0.0,0.0,0.0}, lw=1); // For some reason Basilisk throws an error if you don't put spaces between 'lc='
+  save("Vorticity.mp4");
+}
+
+// Outputting data files with air-water interface location that can be analyzed in Python, Matlab, etc.
 event interface (t+=tplus*10.0)
 {
   char name_interface[100];
@@ -687,7 +547,8 @@ event loginterface (t += tplus) {
     fflush(fp_interface);
 }
 
-event profiles (t = 0; t+=tplus; t<=tmax) // RC restricted the output a little, don't overdo it at first!
+// Profiling the x and y velocities along particular lines in the ellipes:
+event profiles (t = 0; t+=tplus; t<=tmax)
 {
   FILE * fp = fopen("xprof", "a");
   for (double y = ymin; y <= ymax; y += 0.01)
@@ -698,63 +559,17 @@ event profiles (t = 0; t+=tplus; t<=tmax) // RC restricted the output a little, 
   for (double x = xmin; x <= xmax; x += 0.01)
     fprintf (fp, "%g %g %g\n", t, x, interpolate (u.y, x, 0));
   fclose (fp);
-  
-  // scalar shear[];
-  // foreach()
-  //   if (y<0.3)
-  //   {
-  //     shear[] = mu1.*(u.x[0, 1]-u.x[0, -1])/(2.*Delta);
-  //   }
-  // foreach()
-  //   if (y>=0.3)
-  //   {
-  //     shear[] = mu2.*(u.x[0, 1]-u.x[0, -1])/(2.*Delta);
-  //   }
-  // // fp=fopen("shearprof", "a");
-  // // for (double y = -0.5; y <= 0.5; y += 0.01)
-  // //   for (double x = -4; x <= 4; x += 0.01)
-  // //     fprintf(fp, "%g ", shear);
-  // //   fprintf(fp, "\n");
-  // fp=fopen("Xshearprof", "a");
-  // for (double y = -0.5; y <= 0.5; y += 0.01)
-  //   fprintf (fp, "%g %g %g\n", t, y, shear);
-  // fclose (fp);
-
-  // fp=fopen("Yshearprof", "a");
-  // for (double x = -4; x <= 4; x += 0.01)
-  //   fprintf (fp, "%g %g %g\n", t, x, shear);
-  // fclose (fp);
 }
 
-// ybelow and yabove will be used to mark points on the ellipse for each x value
 double ybelow;
 double yabove;
-event stations (t = 0; t+=tplus; t<=tmax) // RC restricted the output a little, don't overdo it at first!
+event stations (t = 0; t+=tplus; t<=tmax)
 {
   FILE * fp = fopen("stations", "a");
   for (double x = -semimajor; x <= semimajor+0.1; x+=0.1) {
-    // I do the rounding stuff below because I need a consistent grid for Python postprocessing
     yabove = sqrt(1-sq(x/3));
     yabove = (double)floor(yabove*10.0)/10.0;
     ybelow = -yabove;
-    // for (double y = ybelow; y <= yabove; y+=0.1) {
-    //   fprintf (fp, "%g %g %g %g\n", t, x, y, interpolate(TT, x, y));
-    // }
   }
   fclose(fp);
-}
-
-event vortmovie (t+=tplus, t<=10.0*tplus)
-{
-  scalar omega[];
-  vorticity(u, omega);
-
-  view (fov=9, width=800, height=350);
-  clear();
-  squares("omega", spread=-1.0, linear=true, map=cool_warm);
-  draw_vof ("f", lc = {0.0,0.0,0.0}, lw=2);
-  draw_vof("circle", lc = {0.0,0.0,0.0}, lw=2);
-  // draw_vof("fs",fc = {0.0,0.0,0.0}, lw=1); 
-  // draw_vof("f", lc = {0.0,0.0,0.0}, lw=1); // For some reason Basilisk throws an error if you don't put spaces between 'lc='
-  save("Vorticity.mp4");
 }
