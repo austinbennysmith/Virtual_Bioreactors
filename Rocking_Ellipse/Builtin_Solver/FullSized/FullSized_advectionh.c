@@ -431,7 +431,7 @@ event Tracer_Fields (t+=tplus) {
   }
   // Tracer field outside ellipse:
   foreach() {
-    if (f[]==1) {
+    if (circle[]==1) {
       T_ellipseOUT[]=T[];
     }
     else {
