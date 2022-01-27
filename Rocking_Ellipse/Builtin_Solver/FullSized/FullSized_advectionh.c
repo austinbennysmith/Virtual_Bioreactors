@@ -1,6 +1,10 @@
-#define FILTERED //RC
+// See "Bioreactor_Equations_2.pdf" for derivations of the equations and nondimensionalizations used in this code.
+
+// The following 2 lines are helpful for interface stuff:
+#define FILTERED
 #define mu(f)  (1./(clamp(f,0,1)*(1./mu1 - 1./mu2) + 1./mu2)) //RC
 
+// Header files to be included (you can read more about them at the Basilisk C website)
 #include "navier-stokes/centered.h"
 #include "two-phase.h"
 #include "tension.h"
@@ -9,73 +13,72 @@
 #include "tracer.h"
 #include "tag.h"
 
-// scalar TT[];
-scalar T[];
+scalar T[]; // This will be the Oxygen tracer
 scalar * tracers = {T};
 
-scalar T_water[];
-scalar T_air[];
-scalar T_ellipseIN[];
-scalar T_ellipseOUT[];
-scalar WATER[];
-
-scalar UV[]; // Magnitude of velocity
+// Defining scalar fields to keep track of how much of the oxygen tracer is in the water, air, and in and out of the ellipse:
+scalar T_water[]; // In the water
+scalar T_air[]; // In the air
+scalar T_ellipseIN[]; // In the ellipse
+scalar T_ellipseOUT[]; // Outside of the ellipse
+scalar WATER[]; // Scalar to keep track of the mass of the water
+scalar UV[]; // Scalar field for the magnitude of velocity
 // double b = 0.00002; // Diffusion coefficient
 
-double thetaNOW;
-double omegaNOW;
+double thetaNOW; // Angle of rotation
+double omegaNOW; // Angular velocity of the ellipse
 
 // The following doubles will be used in the acceleration event to avoid really long lines of code:
-double gravityX;
-double gravityY;
-double coriolisX;
-double coriolisY;
-double centripetalX;
-double centripetalY;
+double gravityX; // x-component of gravitational acceleration
+double gravityY; // y-component of gravitational acceleration
+double coriolisX; // x-component of coriolis acceleration
+double coriolisY; // y-component of coriolis acceleration
+double centripetalX; // x-component of centripetal acceleration
+double centripetalY; // y-component of centripetal acceleration
 
-FILE *fp1 ;
+FILE *fp1 ; // pointer file to be used later
 
-#define MAXLEVEL 9 // RC was 4, needs to be bigger to capture the setup
+#define MAXLEVEL 9 // Maximum level of refinement. I will define grid refinement in the init function
 
 // Defining Froude separately from the other nondimensional quantities because it will be used to set up the reference Velocity:
 #define Fr 1.0 // Froude number
 
 // DIMENSIONAL QUANTITIES:
-#define rhoWater 1000.0 // kg/m^3
-#define rhoAir 1.225 // kg/m^3
-#define muWater 0.001 // approximatley the viscosity of water
-#define muAir 1.81e-5 // approximateley the viscosity of air
+#define rhoWater 1000.0 // water density, kg/m^3
+#define rhoAir 1.225 // air density, kg/m^3
+#define muWater 0.001 // water viscosity, Pa*s
+#define muAir 1.81e-5 // air viscosity, Pa*s
+
+// If you want to make the setup computationally gentler, you make the air viscosity one or two magnitudes greater:
 // #define muAir 1.81e-4 // visc. of air *10
 // #define muAir 1.81e-3 // visc. of air *10
+
 #define sig 0.0728  //surface tension of water
 const double semiminor = 1.0; // semiminor axis (cm)
 const double semimajor = semiminor*3.0; // semimajor axis (cm)
 const double maxDegrees = 7.0; // degrees through which the reactor rotates
-double maxRads = maxDegrees*(3.14159265/180.0);
+double maxRads = maxDegrees*(3.14159265/180.0); // radians through which the reactor rotates
 #define dimensional_period 1.0 // rocking period in actual seconds (will convert to nondimensional time units below for the simulation)
 #define refLength 0.1  // semiminor axis length (m). Could define in terms of semiminor? nah
 #define refVelocity (Fr*sqrt(9.8*refLength))  // Reference length, defined in terms of the Froude number
-#define refTime (refLength/refVelocity)
+#define refTime (refLength/refVelocity) // Reference time scale (not actually used for the simulation, but useful to have)
 
 // DIMENSIONLESS QUANTITIES:
-const double period = (dimensional_period/refTime); // how many NONDIMENSIONAL TIME UNITS it takes to go through a complete rocking cycle. DEFINE IN TERMS OF dimensional_period
+const double period = (dimensional_period/refTime); // how many NONDIMENSIONAL TIME UNITS it takes to go through a complete rocking cycle
 double BB = (2.0*3.14159265)/period; // constant used in rocking motion equations below
 #define Re (rhoWater*refVelocity*refLength/muWater)  // Reynolds number
-#define We (rhoWater*pow(refVelocity,2)*refLength/sig)
-#define rho_ratio (rhoAir/rhoWater)
-#define mu_ratio (muAir/muWater)
+#define We (rhoWater*pow(refVelocity,2)*refLength/sig) // Weber number
+#define rho_ratio (rhoAir/rhoWater) // Density ratio
+#define mu_ratio (muAir/muWater) // Viscosity ratio
 // Should include Peclet numbers eventually
 
 const double tmax = (5.0*period); // Runs for 5 oscillation periods (defined in dimensionless time units)
 const double tplus = (period/100.0); // events that run at set t invervals will have those intervals defined by this quantity
 
+// Pointer files for outputting data:
 FILE *fp_params;
-
-// RC
 FILE * fp_stats;
-
 FILE * fp_interface;
-
 FILE * fp_mass;
 FILE * fp_mass_water;
 FILE * fp_mass_air;
@@ -83,6 +86,7 @@ FILE * fp_mass_IN;
 FILE * fp_mass_OUT;
 FILE * fp_howmuch_water;
 
+// Boundary conditions:
 u.t[top] = dirichlet(0.0);
 u.n[top] = dirichlet(0.0);
 
@@ -95,40 +99,24 @@ u.n[left] = dirichlet(0.0);
 u.t[right] = dirichlet(0.0);
 u.n[right] = dirichlet(0.0);
 
-// I use the following variables to determine the cell length/width
 const double ymax = semiminor+0.5; // ymax of domain (used in masking & profiling, etc.)
 const double ymin = -semiminor-0.5; // ymin of domain (used in masking & profiling, etc.)
 const double xmax = semimajor+3.0; // xmax of domain (used in profiling)
 const double xmin = -semimajor-3.0; // xmin of domain (used in profiling)
-// long int sizeNow; // Total # of cells at t=0.0 (as long int)
-// double sizeNowDouble; // Total # of cells at t=0.0 (as double)
-// double numCellsX; // # of cells in x (long) direction
-// double numCellsY; // # of cells in y (short) direction
+// The following is from an old attempt to do some stability tests. It's probably not relevant anymore but I'm leaving it here in case anyone wants to build on it.
 double DeltaX; // Length of smallest cell in x direction
-// double DeltaY; // Length of smallest cell in y direction
-// double ylength; // Domain length in y direction
-// double xlength; // Domain length in x direction
 double Diffusion_Stability; // test for stability of the FTCS diffusion scheme
 double Advection_Stability; // test for stability of the Lax-Wendroff advection scheme
 
-// scalar s1[];
-
-// void draw_frame(char * fname)
-// {
-// 	cells();
-// 	squares("s1");
-// 	save("fname.png");
-// }
-
+// Defining a scalar field for keeping track of inside/outside the ellipse:
 scalar circle[];
 
 int main() {
-  L0 = 2.0*semimajor+2.0;
-  origin(-L0/2., -semiminor-0.5);// Change -0.5 to -L0/16??
-  // periodic(right);
-  init_grid (1 << MAXLEVEL);
+  L0 = 2.0*semimajor+2.0; // Length of the simulation domain
+  origin(-L0/2., -semiminor-0.5); // Defining the origin of the setup
+  init_grid (1 << MAXLEVEL); // Setting up the grid
 
-  // RC
+  // Setting up some data files:
   {
     char name[200];
     sprintf(name, "logstats.dat");
@@ -170,9 +158,10 @@ int main() {
   rho2 = rho_ratio; // air density
   mu1 = 1/Re; // water dynamic viscosity
   mu2 = mu_ratio*mu1; // air dynamic viscosity
-  f.sigma=1/We; // change this later
+  f.sigma=1/We;
 
-  DT = 1.0e-3; // RC
+  // Some computational parameters:
+  DT = 1.0e-3;
   NITERMIN = 1; // default 1
   NITERMAX = 500; // default 100
   TOLERANCE = 1e-5; // default 1e-3
@@ -222,18 +211,18 @@ int main() {
   fclose(fp_howmuch_water);
 }
 
+// Event to define gravitational, coriolis and centripetal accelerations:
+// See "Rotating_Reference_Frame.pdf" for derivations of the accelerations written out here
 event acceleration (i++)
 {
-  thetaNOW = maxRads*sin(BB*t); // Derivation in notebook. Should write this up at some point.
+  thetaNOW = maxRads*sin(BB*t); // Angle defining how much the ellipse has rotated relative to horizontal
   omegaNOW = BB*maxRads*cos(BB*t); // Derivative of omegaNOW w/respect to t
   face vector av = a;
-  // Which of the following 2 ways of doing it is better??
   foreach_face(x) {
-    gravityX = (1/sqrt(2))*sq(1/Fr)*sin(thetaNOW);
-    coriolisX = 2.0*((u.y[]+u.y[-1])/2.0)*BB*maxRads*cos(BB*t);
-    centripetalX = x*sq(BB)*sq(maxRads)*sq(cos(BB*t));
-    av.x[] -= gravityX - coriolisX + centripetalX;
-    // av.x[] -= (1/sqrt(2))*sq(1/Fr)*sin(thetaNOW) + 2.0*((u.y[]+u.y[-1])/2.0)*BB*maxRads*cos(BB*t) + x*sq(BB)*sq(maxRads)*sq(cos(BB*t));
+    gravityX = (1/sqrt(2))*sq(1/Fr)*sin(thetaNOW); // x component of gravity
+    coriolisX = 2.0*((u.y[]+u.y[-1])/2.0)*BB*maxRads*cos(BB*t); // x component of Coriolis
+    centripetalX = x*sq(BB)*sq(maxRads)*sq(cos(BB*t)); // x component of Centripetal
+    av.x[] -= gravityX - coriolisX + centripetalX; // Combining the accelerations
   }
   foreach_face(y) {
     gravityY = (1/sqrt(2))*sq(1/Fr)*cos(thetaNOW);

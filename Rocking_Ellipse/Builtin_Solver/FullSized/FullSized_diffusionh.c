@@ -22,9 +22,7 @@ scalar T_water[]; // In the water
 scalar T_air[]; // In the air
 scalar T_ellipseIN[]; // In the ellipse
 scalar T_ellipseOUT[]; // Outside of the ellipse
-
 scalar WATER[]; // Scalar to keep track of the mass of the water
-
 scalar UV[]; // Scalar field for the magnitude of velocity
 // double b = 0.00002; // Diffusion coefficient
 
@@ -162,7 +160,7 @@ int main() {
   rho2 = rho_ratio; // air density
   mu1 = 1/Re; // water dynamic viscosity
   mu2 = mu_ratio*mu1; // air dynamic viscosity
-  f.sigma=1/We; // change this later
+  f.sigma=1/We;
 
   // Some computational parameters:
   DT = 1.0e-3;
